@@ -150,6 +150,12 @@
       "commandLineArgs": "/sources(@'QTFileCustomBuild.sharpmake.cs')",
       "workingDirectory": "$(ProjectDir)\\QTFileCustomBuild"
     },
+    "Sample (CMakeLibrary)": {
+      "commandName": "Executable",
+      "executablePath": "$(ProjectDir)\\..\\Sharpmake.Application\\bin\\$(Configuration)\\$(TargetFramework)\\Sharpmake.Application.exe",
+      "commandLineArgs": "/sources(@'CMakeLibrary.sharpmake.cs')",
+      "workingDirectory": "$(ProjectDir)\\CMakeLibrary"
+    },
     "Sample (SimpleExeLibDependency)": {
       "commandName": "Executable",
       "executablePath": "$(ProjectDir)\\..\\Sharpmake.Application\\bin\\$(Configuration)\\$(TargetFramework)\\Sharpmake.Application.exe",

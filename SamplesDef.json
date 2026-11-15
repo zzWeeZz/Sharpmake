@@ -379,6 +379,20 @@
             ]
         },
         {
+            "Name": "CMakeLibrary",
+            "CIs": [ "github", "gitlab" ],
+            "OSs": [ "windows-2022" ],
+            "Frameworks": [ "net6.0" ],
+            "Configurations": [ "debug", "release" ],
+            "TestFolder": "samples/CMakeLibrary",
+            "Commands":
+            [
+                "./RunSharpmake.ps1 -workingDirectory {testFolder} -sharpmakeFile \"CMakeLibrary.sharpmake.cs\" -framework {framework}",
+                "./Compile.ps1 -slnOrPrjFile \"CMakeLibrary_{VsVersionSuffix}_win64.sln\" -configuration {configuration} -platform \"x64\" -WorkingDirectory \"{testFolder}/projects\" -VsVersion {os} -compiler MsBuild",
+                "&'./{testFolder}/projects/output/win64/{configuration}/hellocmake.exe'"
+            ]
+        },
+        {
             "Name": "SimpleExeLibDependency",
             "CIs": [ "github", "gitlab" ],
             "OSs": [ "windows-2022" ],
