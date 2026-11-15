@@ -54,8 +54,37 @@ namespace Sharpmake
         /// <summary>
         /// Path to the CMakeLists.txt, or to the directory holding it. A relative path is relative
         /// to the folder of the .sharpmake.cs file; [project.SharpmakeCsPath] is also accepted.
+        /// When <see cref="CMakeFetch"/> is set, a relative path is relative to the fetched sources
+        /// instead, and it can be left null to use the CMakeLists.txt at their root.
         /// </summary>
         public string CMakeListsPath { get; set; }
+
+        /// <summary>
+        /// When set, the sources are downloaded (like CMake's FetchContent) before the
+        /// CMakeLists.txt is read, and reused from the cache on later runs.
+        /// See <see cref="CMakeFetchFrom"/>.
+        /// </summary>
+        public CMakeFetchRequest CMakeFetch { get; set; }
+
+        /// <summary>
+        /// Folder of the fetched sources, available from the [Configure] methods on when
+        /// <see cref="CMakeFetch"/> is set.
+        /// </summary>
+        public string CMakeFetchedSourceDirectory { get; private set; }
+
+        /// <summary>
+        /// Downloads the library from a repository or archive URL, like FetchContent_Declare
+        /// with GIT_REPOSITORY and GIT_TAG:
+        /// <c>CMakeFetchFrom("https://github.com/fmtlib/fmt", "11.0.2");</c>
+        /// Use a tag or a commit hash to pin the version. The sources go to a "_deps" folder next
+        /// to the .sharpmake.cs file unless <see cref="CMakeFetchContent.CacheDirectory"/> or the
+        /// returned request's CacheDirectory says otherwise.
+        /// </summary>
+        protected CMakeFetchRequest CMakeFetchFrom(string url, string reference = null)
+        {
+            CMakeFetch = new CMakeFetchRequest { Url = url, Ref = reference };
+            return CMakeFetch;
+        }
 
         /// <summary>
         /// Name of the target in the CMakeLists.txt. When null, the project <see cref="Project.Name"/> is used.
@@ -117,11 +146,34 @@ namespace Sharpmake
         {
             base.PreConfigure();
 
-            if (string.IsNullOrEmpty(CMakeListsPath))
-                throw new Error($"{GetType().Name}: CMakeListsPath must be set in the constructor of a CMakeProject.");
+            string path;
+            if (CMakeFetch != null)
+            {
+                var request = CMakeFetch;
+                string cacheDirectory = request.CacheDirectory ?? CMakeFetchContent.CacheDirectory ?? Path.Combine(SharpmakeCsPath, "_deps");
+                cacheDirectory = Util.PathGetAbsolute(SharpmakeCsPath, cacheDirectory.Replace("[project.SharpmakeCsPath]", SharpmakeCsPath));
+                CMakeFetchedSourceDirectory = CMakeFetchContent.Fetch(new CMakeFetchRequest
+                {
+                    Url = request.Url,
+                    Ref = request.Ref,
+                    Sha256 = request.Sha256,
+                    Method = request.Method,
+                    Submodules = request.Submodules,
+                    CacheDirectory = cacheDirectory,
+                });
 
-            string path = CMakeListsPath.Replace("[project.SharpmakeCsPath]", SharpmakeCsPath);
-            path = Util.PathGetAbsolute(SharpmakeCsPath, path);
+                path = string.IsNullOrEmpty(CMakeListsPath)
+                    ? CMakeFetchedSourceDirectory
+                    : Util.PathGetAbsolute(CMakeFetchedSourceDirectory, CMakeListsPath.Replace("[project.SharpmakeCsPath]", SharpmakeCsPath));
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(CMakeListsPath))
+                    throw new Error($"{GetType().Name}: CMakeListsPath (or CMakeFetch) must be set in the constructor of a CMakeProject.");
+
+                path = CMakeListsPath.Replace("[project.SharpmakeCsPath]", SharpmakeCsPath);
+                path = Util.PathGetAbsolute(SharpmakeCsPath, path);
+            }
 
             string targetName = CMakeTargetName ?? Name;
 
@@ -159,6 +211,8 @@ namespace Sharpmake
 
             if (CMakeLogWarnings && Builder.Instance != null)
             {
+                if (CMakeTarget.InterfaceCompileOptions.Count > 0)
+                    Builder.Instance.LogWarningLine($"CMake: {GetType().Name}: target '{CMakeTarget.Name}' asks its users to compile with: {string.Join(" ", CMakeTarget.InterfaceCompileOptions)}. Sharpmake doesn't forward compiler options; add them to the projects that depend on it if they need them.");
                 foreach (var linked in CMakeLinkedTargets)
                     Builder.Instance.LogWarningLine($"CMake: {GetType().Name}: target '{CMakeTarget.Name}' links to CMake target '{linked.Name}', which is not added automatically. Add a CMakeProject for it and a dependency to it.");
             }
@@ -196,6 +250,11 @@ namespace Sharpmake
             // ExportDefines are only seen by dependents, Defines only by the project itself.
             conf.Defines.AddRange(target.CompileDefinitions);
             conf.ExportDefines.AddRange(target.InterfaceCompileDefinitions);
+
+            // Compiler options (target_compile_options). Sharpmake can't forward compiler options
+            // to dependents: the INTERFACE ones are listed in a warning from PreConfigure.
+            foreach (string option in target.CompileOptions)
+                conf.AdditionalCompilerOptions.Add(option);
 
             // CMake defines <target>_EXPORTS when building a shared library.
             if (target.Type == CMakeTargetType.SharedLibrary || target.Type == CMakeTargetType.ModuleLibrary)

@@ -45,6 +45,9 @@ namespace Sharpmake
         public List<string> CompileDefinitions { get; } = new List<string>();
         public List<string> InterfaceCompileDefinitions { get; } = new List<string>();
 
+        public List<string> CompileOptions { get; } = new List<string>();
+        public List<string> InterfaceCompileOptions { get; } = new List<string>();
+
         public List<string> LinkLibraries { get; } = new List<string>();
         public List<string> InterfaceLinkLibraries { get; } = new List<string>();
 

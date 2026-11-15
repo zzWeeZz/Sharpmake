@@ -168,6 +168,18 @@ namespace Sharpmake.Application
                 MutexSuffix = name;
             }
 
+            [CommandLine.Option("fetchupdate", @"Download again the sources of CMake fetches that are not pinned to a commit hash (branches, tags, archives without hash): ex: /fetchupdate")]
+            public void CommandLineFetchUpdate()
+            {
+                CMakeFetchContent.UpdateMode = CMakeFetchContent.Update.Refresh;
+            }
+
+            [CommandLine.Option("fetchoffline", @"Never download sources of CMake fetches, only use the cache. Fails if something is missing: ex: /fetchoffline")]
+            public void CommandLineFetchOffline()
+            {
+                CMakeFetchContent.UpdateMode = CMakeFetchContent.Update.Offline;
+            }
+
             [CommandLine.Option("skipinvalidpath", @"Skip invalid paths when resolving projects \ solutions : ex: /skipinvalidpath(<true|false>)")]
             public void CommandLineSkipInvalidPath(bool value)
             {

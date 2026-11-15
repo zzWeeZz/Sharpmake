@@ -246,6 +246,65 @@ target_compile_definitions(funcs PRIVATE ${upper_name}_MAJOR=${VERSION_MAJOR} MI
         }
 
         [Test]
+        public void ParseArgumentsAndListOperations()
+        {
+            WriteFile("src/a.cpp");
+            WriteFile("src/b.cpp");
+            WriteFile("src/module.cpp");
+            // Shaped like fmt's add_module_library.
+            WriteFile("CMakeLists.txt", @"
+function(add_module_library name)
+  cmake_parse_arguments(AML ""SHARED"" ""IF"" ""FALLBACK"" ${ARGN})
+  add_library(${name})
+  if (NOT ${${AML_IF}})
+    target_sources(${name} PRIVATE ${AML_FALLBACK})
+  else()
+    target_sources(${name} PRIVATE ${AML_UNPARSED_ARGUMENTS})
+  endif()
+  target_compile_definitions(${name} PRIVATE SHARED_${AML_SHARED})
+endfunction()
+
+option(USE_MODULES ""modules"" OFF)
+add_module_library(lib src/module.cpp FALLBACK src/a.cpp src/b.cpp IF USE_MODULES)
+
+set(items x y z w)
+list(GET items 0 -1 ends)
+list(REMOVE_AT items 0 -1)
+list(FIND items z z_index)
+list(INSERT items 0 first)
+list(POP_BACK items popped)
+list(SUBLIST items 1 1 middle)
+target_compile_definitions(lib PRIVATE ""ENDS=${ends}"" ""ITEMS=${items}"" Z=${z_index} POPPED=${popped} MIDDLE=${middle})
+");
+            var result = Read();
+            var lib = result.GetTarget("lib");
+
+            CollectionAssert.AreEqual(new[] { P("src/a.cpp"), P("src/b.cpp") }, lib.Sources);
+            CollectionAssert.AreEqual(new[] { "SHARED_FALSE", "ENDS=x;w", "ITEMS=first;y", "Z=1", "POPPED=z", "MIDDLE=y" }, lib.CompileDefinitions);
+            CollectionAssert.IsEmpty(result.Warnings);
+        }
+
+        [Test]
+        public void CompileOptionsAndGeneratorExpressions()
+        {
+            WriteFile("lib.cpp");
+            WriteFile("CMakeLists.txt", @"
+add_library(lib lib.cpp)
+target_compile_options(lib PUBLIC $<$<COMPILE_LANGUAGE:CXX>:/utf-8> PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/W4> $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall>)
+target_compile_definitions(lib PRIVATE $<$<PLATFORM_ID:Windows>:ON_WINDOWS> $<$<NOT:$<BOOL:${UNSET_VAR}>>:NOT_SET> $<IF:$<AND:1,0>,BOTH,NOT_BOTH>)
+");
+            var lib = Read(new Dictionary<string, string> { { "CMAKE_CXX_COMPILER_ID", "MSVC" }, { "CMAKE_SYSTEM_NAME", "Windows" } }).GetTarget("lib");
+
+            CollectionAssert.AreEqual(new[] { "/utf-8", "/W4" }, lib.CompileOptions);
+            CollectionAssert.AreEqual(new[] { "/utf-8" }, lib.InterfaceCompileOptions);
+            CollectionAssert.AreEqual(new[] { "ON_WINDOWS", "NOT_SET", "NOT_BOTH" }, lib.CompileDefinitions);
+
+            var gcc = CMakeListsReader.Read(_root, new Dictionary<string, string> { { "CMAKE_CXX_COMPILER_ID", "GNU" }, { "CMAKE_SYSTEM_NAME", "Linux" } }).GetTarget("lib");
+            CollectionAssert.AreEqual(new[] { "/utf-8", "-Wall" }, gcc.CompileOptions);
+            CollectionAssert.AreEqual(new[] { "NOT_SET", "NOT_BOTH" }, gcc.CompileDefinitions);
+        }
+
+        [Test]
         public void MissingFileThrows()
         {
             Assert.Throws<FileNotFoundException>(() => CMakeListsReader.Read(Path.Combine(_root, "nope")));

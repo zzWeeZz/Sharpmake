@@ -2,6 +2,7 @@
 samples/**/*.csproj
 samples/**/*.sln
 samples/**/projects/*
+samples/**/_deps/
 samples/**/codebase/temp/*
 Sharpmake.Application/Properties/launchSettings.json
 Sharpmake.FunctionalTests/**/projects/*

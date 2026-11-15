@@ -156,6 +156,12 @@
       "commandLineArgs": "/sources(@'CMakeLibrary.sharpmake.cs')",
       "workingDirectory": "$(ProjectDir)\\CMakeLibrary"
     },
+    "Sample (CMakeFetch)": {
+      "commandName": "Executable",
+      "executablePath": "$(ProjectDir)\\..\\Sharpmake.Application\\bin\\$(Configuration)\\$(TargetFramework)\\Sharpmake.Application.exe",
+      "commandLineArgs": "/sources(@'CMakeFetch.sharpmake.cs')",
+      "workingDirectory": "$(ProjectDir)\\CMakeFetch"
+    },
     "Sample (SimpleExeLibDependency)": {
       "commandName": "Executable",
       "executablePath": "$(ProjectDir)\\..\\Sharpmake.Application\\bin\\$(Configuration)\\$(TargetFramework)\\Sharpmake.Application.exe",
