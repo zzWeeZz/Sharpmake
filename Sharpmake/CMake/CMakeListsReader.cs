@@ -619,6 +619,7 @@ namespace Sharpmake
                     case "unset": CommandUnset(command); break;
                     case "option": CommandOption(command); break;
                     case "list": CommandList(command); break;
+                    case "cmake_parse_arguments": CommandParseArguments(command); break;
                     case "file": CommandFile(command); break;
                     case "project": CommandProject(command); break;
                     case "include": CommandInclude(command); break;
@@ -632,6 +633,7 @@ namespace Sharpmake
                     case "target_include_directories": CommandTargetIncludeDirectories(command); break;
                     case "target_compile_definitions": CommandTargetCompileDefinitions(command); break;
                     case "target_link_libraries": CommandTargetLinkLibraries(command); break;
+                    case "target_compile_options": CommandTargetCompileOptions(command); break;
                     case "return": throw new ReturnSignal();
                     case "message": CommandMessage(command); break;
                     case "string": CommandString(command); break;
@@ -648,9 +650,9 @@ namespace Sharpmake
             {
                 "set", "unset", "option", "list", "file", "project", "include", "add_subdirectory", "include_directories",
                 "add_definitions", "add_compile_definitions", "add_library", "add_executable", "target_sources",
-                "target_include_directories", "target_compile_definitions", "target_link_libraries", "return",
-                "message", "string", "if", "foreach", "function", "macro", "cmake_minimum_required",
-                "target_compile_options", "target_compile_features", "set_target_properties", "install",
+                "target_include_directories", "target_compile_definitions", "target_link_libraries", "target_compile_options", "return",
+                "message", "string", "cmake_parse_arguments", "if", "foreach", "function", "macro", "cmake_minimum_required",
+                "target_compile_features", "set_target_properties", "install",
             };
 
             private void CallFunction(Command command, FunctionDefinition function)
@@ -831,12 +833,172 @@ namespace Sharpmake
                             list = list.Where(item => regex.IsMatch(item) == include).ToList();
                         }
                         break;
+                    case "GET":
+                        // list(GET <list> <index>... <out>)
+                        if (rest.Count >= 2)
+                        {
+                            var picked = rest.Take(rest.Count - 1)
+                                .Select(i => ListIndex(i, list.Count))
+                                .Where(i => i >= 0)
+                                .Select(i => list[i]);
+                            SetVariable(rest[rest.Count - 1], JoinList(picked));
+                        }
+                        return;
+                    case "FIND":
+                        if (rest.Count >= 2)
+                            SetVariable(rest[1], list.IndexOf(rest[0]).ToString(CultureInfo.InvariantCulture));
+                        return;
+                    case "SUBLIST":
+                        // list(SUBLIST <list> <begin> <length> <out>)
+                        if (rest.Count >= 3)
+                        {
+                            int begin = Math.Min(ParseInt(rest[0]), list.Count);
+                            int length = ParseInt(rest[1]);
+                            int count = length < 0 ? list.Count - begin : Math.Min(length, list.Count - begin);
+                            SetVariable(rest[2], JoinList(list.Skip(begin).Take(Math.Max(0, count))));
+                        }
+                        return;
+                    case "INSERT":
+                        if (rest.Count >= 1)
+                        {
+                            int index = rest[0].StartsWith("-", StringComparison.Ordinal) ? ListIndex(rest[0], list.Count) : ParseInt(rest[0]);
+                            list.InsertRange(Math.Max(0, Math.Min(index, list.Count)), rest.Skip(1));
+                        }
+                        break;
+                    case "REMOVE_AT":
+                        foreach (int index in rest.Select(i => ListIndex(i, list.Count)).Where(i => i >= 0).Distinct().OrderByDescending(i => i).ToList())
+                            list.RemoveAt(index);
+                        break;
+                    case "POP_BACK":
+                    case "POP_FRONT":
+                    {
+                        bool back = operation == "POP_BACK";
+                        var outputs = rest.Count > 0 ? rest : new List<string> { null };
+                        foreach (string output in outputs)
+                        {
+                            if (list.Count == 0)
+                            {
+                                if (output != null)
+                                    SetVariable(output, "");
+                                continue;
+                            }
+                            int index = back ? list.Count - 1 : 0;
+                            if (output != null)
+                                SetVariable(output, list[index]);
+                            list.RemoveAt(index);
+                        }
+                        break;
+                    }
+                    case "REVERSE":
+                        list.Reverse();
+                        break;
+                    case "SORT":
+                        list.Sort(StringComparer.Ordinal);
+                        if (rest.Contains("DESCENDING"))
+                            list.Reverse();
+                        break;
                     default:
                         Warn(command, $"list({operation}) is not supported");
                         return;
                 }
 
                 SetVariable(name, JoinList(list));
+            }
+
+            private static int ParseInt(string value) =>
+                int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int result) ? result : 0;
+
+            /// <summary>Index into a list, negative ones counting from the end; -1 when out of range.</summary>
+            private static int ListIndex(string value, int count)
+            {
+                int index = ParseInt(value);
+                if (index < 0)
+                    index += count;
+                return index >= 0 && index < count ? index : -1;
+            }
+
+            private void CommandParseArguments(Command command)
+            {
+                // cmake_parse_arguments(<prefix> <options> <one_value_keywords> <multi_value_keywords> <args>...)
+                // cmake_parse_arguments(PARSE_ARGV <N> <prefix> <options> <one_value_keywords> <multi_value_keywords>)
+                var args = ExpandArguments(command);
+                List<string> values;
+                if (args.Count >= 1 && args[0] == "PARSE_ARGV")
+                {
+                    if (args.Count < 6)
+                        return;
+                    int first = ParseInt(args[1]);
+                    int argc = ParseInt(GetVariable("ARGC"));
+                    values = new List<string>();
+                    for (int i = first; i < argc; ++i)
+                        values.Add(GetVariable("ARGV" + i.ToString(CultureInfo.InvariantCulture)));
+                    args = args.Skip(2).Take(4).ToList();
+                }
+                else
+                {
+                    if (args.Count < 4)
+                        return;
+                    values = args.Skip(4).ToList();
+                }
+
+                string prefix = args[0];
+                var options = SplitList(args[1]).ToList();
+                var oneValue = SplitList(args[2]).ToList();
+                var multiValue = SplitList(args[3]).ToList();
+
+                var parsed = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var unparsed = new List<string>();
+                var missingValues = new List<string>();
+                string current = null;
+
+                foreach (string value in values)
+                {
+                    if (options.Contains(value))
+                    {
+                        seen.Add(value);
+                        current = null;
+                        continue;
+                    }
+                    if (oneValue.Contains(value) || multiValue.Contains(value))
+                    {
+                        if (current != null && parsed[current].Count == 0)
+                            missingValues.Add(current);
+                        current = value;
+                        parsed[current] = new List<string>();
+                        continue;
+                    }
+                    if (current != null)
+                    {
+                        parsed[current].Add(value);
+                        if (oneValue.Contains(current))
+                            current = null;
+                    }
+                    else
+                    {
+                        unparsed.Add(value);
+                    }
+                }
+                if (current != null && parsed[current].Count == 0)
+                    missingValues.Add(current);
+
+                foreach (string option in options)
+                    SetVariable(prefix + "_" + option, seen.Contains(option) ? "TRUE" : "FALSE");
+                foreach (string keyword in oneValue.Concat(multiValue))
+                {
+                    if (parsed.TryGetValue(keyword, out var keywordValues) && keywordValues.Count > 0)
+                        SetVariable(prefix + "_" + keyword, JoinList(keywordValues));
+                    else
+                        UnsetVariable(prefix + "_" + keyword);
+                }
+                if (unparsed.Count > 0)
+                    SetVariable(prefix + "_UNPARSED_ARGUMENTS", JoinList(unparsed));
+                else
+                    UnsetVariable(prefix + "_UNPARSED_ARGUMENTS");
+                if (missingValues.Count > 0)
+                    SetVariable(prefix + "_KEYWORDS_MISSING_VALUES", JoinList(missingValues));
+                else
+                    UnsetVariable(prefix + "_KEYWORDS_MISSING_VALUES");
             }
 
             private void CommandFile(Command command)
@@ -1208,6 +1370,32 @@ namespace Sharpmake
                 }
             }
 
+            private void CommandTargetCompileOptions(Command command)
+            {
+                var args = ExpandArguments(command);
+                var target = FindTarget(command, args);
+                if (target == null)
+                    return;
+
+                string visibility = target.Type == CMakeTargetType.InterfaceLibrary ? "INTERFACE" : "PRIVATE";
+                foreach (string arg in args.Skip(1))
+                {
+                    if (IsVisibilityKeyword(arg))
+                    {
+                        visibility = arg;
+                        continue;
+                    }
+                    if (arg == "BEFORE")
+                        continue;
+
+                    foreach (string option in SplitList(ResolveGeneratorExpressions(arg, command)))
+                    {
+                        if (!string.IsNullOrEmpty(option))
+                            AddWithVisibility(target.CompileOptions, target.InterfaceCompileOptions, visibility, option);
+                    }
+                }
+            }
+
             private void CommandTargetLinkLibraries(Command command)
             {
                 var args = ExpandArguments(command);
@@ -1492,6 +1680,8 @@ namespace Sharpmake
 
             private void SetVariable(string name, string value) => _scope.Variables[name] = value;
 
+            private void UnsetVariable(string name) => _scope.Variables.Remove(name);
+
             private void RestoreVariable(string name, string previous)
             {
                 if (previous == null)
@@ -1648,7 +1838,7 @@ namespace Sharpmake
                     }
 
                     string inner = value.Substring(start + 2, end - start - 2);
-                    int colon = inner.IndexOf(':');
+                    int colon = IndexOfTopLevelColon(inner);
                     string name = colon >= 0 ? inner.Substring(0, colon) : inner;
                     string content = colon >= 0 ? inner.Substring(colon + 1) : "";
 
@@ -1659,11 +1849,116 @@ namespace Sharpmake
                         // dropped
                     }
                     else
-                        Warn(command, $"generator expression $<{inner}> is not supported and was ignored");
+                    {
+                        string evaluated = EvaluateGeneratorExpression(name, content, command);
+                        if (evaluated != null)
+                            sb.Append(evaluated);
+                        else
+                            Warn(command, $"generator expression $<{inner}> is not supported and was ignored");
+                    }
 
                     pos = end + 1;
                 }
                 return sb.ToString();
+            }
+
+            /// <summary>
+            /// Evaluates the generator expressions whose value is known without a configuration:
+            /// logic ($&lt;0:..&gt;, $&lt;1:..&gt;, BOOL, NOT, AND, OR, IF, STREQUAL) and the
+            /// compiler and platform queries, answered from CMAKE_CXX_COMPILER_ID and
+            /// CMAKE_SYSTEM_NAME. COMPILE_LANGUAGE is true for C and CXX. Returns null for
+            /// anything else, such as $&lt;CONFIG:...&gt;.
+            /// </summary>
+            private string EvaluateGeneratorExpression(string name, string content, Command command)
+            {
+                string Bool(bool value) => value ? "1" : "0";
+                bool MatchesAny(string actual, string list) =>
+                    list.Split(',').Any(item => string.Equals(item.Trim(), actual, StringComparison.OrdinalIgnoreCase));
+                List<string> Arguments() => SplitGeneratorArguments(ResolveGeneratorExpressions(content, command));
+
+                // In $<condition:value>, the condition may itself be an expression.
+                if (name.Contains("$<"))
+                {
+                    name = ResolveGeneratorExpressions(name, command);
+                    if (name != "0" && name != "1")
+                        return ""; // the condition could not be evaluated, and has been warned about
+                }
+
+                switch (name)
+                {
+                    case "0": return "";
+                    case "1": return ResolveGeneratorExpressions(content, command);
+                    case "BOOL": return Bool(IsTrueConstant(ResolveGeneratorExpressions(content, command)));
+                    case "NOT": return Bool(ResolveGeneratorExpressions(content, command) != "1");
+                    case "AND": return Bool(Arguments().All(a => a == "1"));
+                    case "OR": return Bool(Arguments().Any(a => a == "1"));
+                    case "IF":
+                    {
+                        var parts = Arguments();
+                        return parts.Count == 3 ? (parts[0] == "1" ? parts[1] : parts[2]) : null;
+                    }
+                    case "STREQUAL":
+                    {
+                        var parts = Arguments();
+                        return parts.Count == 2 ? Bool(parts[0] == parts[1]) : null;
+                    }
+                    case "COMPILE_LANGUAGE":
+                        return Bool(content.Length == 0 || MatchesAny("CXX", content) || MatchesAny("C", content));
+                    case "COMPILE_LANG_AND_ID":
+                    {
+                        var parts = content.Split(',').Select(p => p.Trim()).ToList();
+                        if (parts.Count < 2)
+                            return null;
+                        bool language = parts[0] == "CXX" || parts[0] == "C";
+                        string compiler = GetVariable(parts[0] == "C" ? "CMAKE_C_COMPILER_ID" : "CMAKE_CXX_COMPILER_ID");
+                        return Bool(language && parts.Skip(1).Any(id => string.Equals(id, compiler, StringComparison.OrdinalIgnoreCase)));
+                    }
+                    case "CXX_COMPILER_ID":
+                        return content.Length == 0 ? GetVariable("CMAKE_CXX_COMPILER_ID") : Bool(MatchesAny(GetVariable("CMAKE_CXX_COMPILER_ID"), content));
+                    case "C_COMPILER_ID":
+                        return content.Length == 0 ? GetVariable("CMAKE_C_COMPILER_ID") : Bool(MatchesAny(GetVariable("CMAKE_C_COMPILER_ID"), content));
+                    case "PLATFORM_ID":
+                        return content.Length == 0 ? GetVariable("CMAKE_SYSTEM_NAME") : Bool(MatchesAny(GetVariable("CMAKE_SYSTEM_NAME"), content));
+                    default:
+                        return null;
+                }
+            }
+
+            private static int IndexOfTopLevelColon(string inner)
+            {
+                int depth = 0;
+                for (int i = 0; i < inner.Length; ++i)
+                {
+                    if (inner[i] == '<' && i > 0 && inner[i - 1] == '$')
+                        ++depth;
+                    else if (inner[i] == '>' && depth > 0)
+                        --depth;
+                    else if (inner[i] == ':' && depth == 0)
+                        return i;
+                }
+                return -1;
+            }
+
+            /// <summary>Splits the comma separated arguments of a generator expression at the top level.</summary>
+            private static List<string> SplitGeneratorArguments(string content)
+            {
+                var parts = new List<string>();
+                int depth = 0;
+                int start = 0;
+                for (int i = 0; i < content.Length; ++i)
+                {
+                    if (content[i] == '<' && i > 0 && content[i - 1] == '$')
+                        ++depth;
+                    else if (content[i] == '>' && depth > 0)
+                        --depth;
+                    else if (content[i] == ',' && depth == 0)
+                    {
+                        parts.Add(content.Substring(start, i - start));
+                        start = i + 1;
+                    }
+                }
+                parts.Add(content.Substring(start));
+                return parts;
             }
 
             #endregion
